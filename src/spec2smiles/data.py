@@ -227,6 +227,268 @@ def load_tsv_rows(
     return rows
 
 
+
+
+def _default_enveda_dir() -> Path:
+    return Path(__file__).resolve().parents[2] / "data" / "kaggle" / "enveda-casmi26"
+
+
+def load_enveda_parquet_rows(
+    path: Path | str | None = None,
+    *,
+    split: str = "train",
+    max_samples: int | None = None,
+    val_fraction: float = 0.1,
+    seed: int = 42,
+    columns: list[str] | None = None,
+) -> list[dict[str, Any]]:
+    """
+    Load Enveda CASMI 2026 Kaggle parquet into MassSpecGym-style rows.
+
+    Train: peaks from ms2_mzs / ms2_normalized_intensities; SMILES from
+    normalized_smiles. No official fold — we carve a deterministic val split
+    from the loaded subset (last val_fraction, or a held-out slice after
+    max_samples for train+val).
+
+    split:
+      - "train" / "val": from train.parquet with internal split
+      - "test": from test.parquet (smiles may be empty placeholder)
+    """
+    import pyarrow.parquet as pq
+
+    root = _default_enveda_dir()
+    split = (split or "train").lower()
+    if path is None:
+        path = root / ("test.parquet" if split == "test" else "train.parquet")
+    path = Path(path)
+    if not path.exists():
+        raise FileNotFoundError(f"Enveda parquet not found: {path}")
+
+    if split == "test":
+        want_cols = columns or [
+            "molecule_id",
+            "spectrum_id",
+            "ms2_mzs",
+            "ms2_normalized_intensities",
+            "precursor_mz",
+            "adduct",
+            "ionization_mode",
+            "instrument_type",
+            "molecular_formula",
+        ]
+        # test may lack molecular_formula
+        schema_names = set(pq.read_schema(path).names)
+        want_cols = [c for c in want_cols if c in schema_names]
+        df = pq.read_table(path, columns=want_cols).to_pandas()
+        rows: list[dict[str, Any]] = []
+        for i, r in df.iterrows():
+            mzs = _parse_array_cell(r.get("ms2_mzs"))
+            intensities = _parse_array_cell(r.get("ms2_normalized_intensities"))
+            if not mzs:
+                continue
+            if len(intensities) != len(mzs):
+                n = min(len(mzs), len(intensities))
+                mzs, intensities = mzs[:n], intensities[:n]
+            mid = str(r.get("molecule_id", f"row_{i}"))
+            sid = str(r.get("spectrum_id", mid))
+            pmz = r.get("precursor_mz")
+            rows.append(
+                {
+                    "identifier": sid,
+                    "molecule_id": mid,
+                    "spectrum_id": sid,
+                    "mzs": mzs,
+                    "intensities": intensities,
+                    "smiles": "",  # unknown at test time
+                    "formula": str(r["molecular_formula"]) if "molecular_formula" in r and pd.notna(r.get("molecular_formula")) else None,
+                    "precursor_mz": float(pmz) if pmz is not None and pd.notna(pmz) else None,
+                    "fold": "test",
+                    "adduct": str(r["adduct"]) if "adduct" in r and pd.notna(r.get("adduct")) else None,
+                }
+            )
+            if max_samples is not None and len(rows) >= max_samples:
+                break
+        return rows
+
+    # train / val from train.parquet — stream row groups until enough rows
+    want_cols = columns or [
+        "normalized_smiles",
+        "ms2_mzs",
+        "ms2_normalized_intensities",
+        "precursor_mz",
+        "molecular_formula",
+        "inchikey",
+    ]
+    schema_names = set(pq.read_schema(path).names)
+    want_cols = [c for c in want_cols if c in schema_names]
+
+    # Need train+val pool when splitting
+    if max_samples is not None:
+        # load a bit more than requested so we can split
+        if split in ("train", "val"):
+            # Caller passes max_train / max_val separately; for a single call we
+            # interpret max_samples as the size of THIS split. Upstream
+            # build_dataloaders will call twice — so we load a shared pool
+            # keyed by seed when both are needed. Here: load max_samples for
+            # the requested split using a deterministic offset.
+            pool_target = max_samples
+        else:
+            pool_target = max_samples
+    else:
+        pool_target = None
+
+    pf = pq.ParquetFile(path)
+    collected: list[dict[str, Any]] = []
+    for rg in range(pf.num_row_groups):
+        table = pf.read_row_group(rg, columns=want_cols)
+        df = table.to_pandas()
+        for _, r in df.iterrows():
+            smi = r.get("normalized_smiles")
+            if smi is None or (isinstance(smi, float) and math.isnan(smi)):
+                continue
+            smi = str(smi).strip()
+            if not smi or smi.lower() == "nan":
+                continue
+            mzs = _parse_array_cell(r.get("ms2_mzs"))
+            intensities = _parse_array_cell(r.get("ms2_normalized_intensities"))
+            if not mzs:
+                continue
+            if len(intensities) != len(mzs):
+                n = min(len(mzs), len(intensities))
+                mzs, intensities = mzs[:n], intensities[:n]
+            pmz = r.get("precursor_mz")
+            formula = None
+            if "molecular_formula" in r.index and pd.notna(r.get("molecular_formula")):
+                formula = str(r["molecular_formula"]).strip()
+            ik = None
+            if "inchikey" in r.index and pd.notna(r.get("inchikey")):
+                ik = str(r["inchikey"]).strip()
+            collected.append(
+                {
+                    "identifier": ik or f"enveda_{len(collected)}",
+                    "molecule_id": ik or f"enveda_{len(collected)}",
+                    "mzs": mzs,
+                    "intensities": intensities,
+                    "smiles": smi,
+                    "formula": formula,
+                    "precursor_mz": float(pmz) if pmz is not None and pd.notna(pmz) else None,
+                    "fold": "train",  # reassigned below
+                    "inchikey": ik,
+                }
+            )
+            if pool_target is not None and len(collected) >= pool_target:
+                break
+        if pool_target is not None and len(collected) >= pool_target:
+            break
+
+    if not collected:
+        return []
+
+    # Deterministic shuffle then split for train/val when loading full capped pool.
+    # For separate train/val calls with different max_samples, use index ranges
+    # from a shared larger pool. Simpler approach used by build_dataloaders:
+    # load_enveda_train_val() — see below. For this function: assign folds by
+    # hash so train and val calls with different max_samples still get disjoint
+    # rows when reading sequentially from the start.
+    rng = random.Random(seed)
+    indices = list(range(len(collected)))
+    rng.shuffle(indices)
+    n_val = max(1, int(round(len(collected) * val_fraction))) if len(collected) > 1 else 0
+    val_set = set(indices[:n_val])
+    out: list[dict[str, Any]] = []
+    for i, row in enumerate(collected):
+        row = dict(row)
+        row["fold"] = "val" if i in val_set else "train"
+        if row["fold"] == split:
+            out.append(row)
+    if max_samples is not None:
+        out = out[:max_samples]
+    return out
+
+
+def load_enveda_train_val(
+    data_dir: Path | str | None = None,
+    max_train_samples: int | None = 5000,
+    max_val_samples: int | None = 500,
+    seed: int = 42,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Load a capped train/val split from Enveda train.parquet in one pass."""
+    import pyarrow.parquet as pq
+
+    data_dir = Path(data_dir) if data_dir else _default_enveda_dir()
+    path = data_dir / "train.parquet"
+    if not path.exists():
+        raise FileNotFoundError(f"Enveda train parquet not found: {path}")
+
+    n_train = int(max_train_samples) if max_train_samples is not None else 5000
+    n_val = int(max_val_samples) if max_val_samples is not None else 500
+    need = n_train + n_val
+
+    want_cols = [
+        "normalized_smiles",
+        "ms2_mzs",
+        "ms2_normalized_intensities",
+        "precursor_mz",
+        "molecular_formula",
+        "inchikey",
+    ]
+    schema_names = set(pq.read_schema(path).names)
+    want_cols = [c for c in want_cols if c in schema_names]
+
+    pf = pq.ParquetFile(path)
+    collected: list[dict[str, Any]] = []
+    for rg in range(pf.num_row_groups):
+        df = pf.read_row_group(rg, columns=want_cols).to_pandas()
+        for _, r in df.iterrows():
+            smi = r.get("normalized_smiles")
+            if smi is None or (isinstance(smi, float) and math.isnan(smi)):
+                continue
+            smi = str(smi).strip()
+            if not smi or smi.lower() == "nan":
+                continue
+            mzs = _parse_array_cell(r.get("ms2_mzs"))
+            intensities = _parse_array_cell(r.get("ms2_normalized_intensities"))
+            if not mzs:
+                continue
+            if len(intensities) != len(mzs):
+                n = min(len(mzs), len(intensities))
+                mzs, intensities = mzs[:n], intensities[:n]
+            pmz = r.get("precursor_mz")
+            formula = None
+            if "molecular_formula" in r.index and pd.notna(r.get("molecular_formula")):
+                formula = str(r["molecular_formula"]).strip()
+            ik = None
+            if "inchikey" in r.index and pd.notna(r.get("inchikey")):
+                ik = str(r["inchikey"]).strip()
+            collected.append(
+                {
+                    "identifier": ik or f"enveda_{len(collected)}",
+                    "molecule_id": ik or f"enveda_{len(collected)}",
+                    "mzs": mzs,
+                    "intensities": intensities,
+                    "smiles": smi,
+                    "formula": formula,
+                    "precursor_mz": float(pmz) if pmz is not None and pd.notna(pmz) else None,
+                    "fold": "train",
+                    "inchikey": ik,
+                }
+            )
+            if len(collected) >= need:
+                break
+        if len(collected) >= need:
+            break
+
+    rng = random.Random(seed)
+    rng.shuffle(collected)
+    val_rows = collected[:n_val]
+    train_rows = collected[n_val : n_val + n_train]
+    for r in val_rows:
+        r["fold"] = "val"
+    for r in train_rows:
+        r["fold"] = "train"
+    return train_rows, val_rows
+
+
 def load_rows(
     source: str = "auto",
     tsv_path: str | Path | None = None,

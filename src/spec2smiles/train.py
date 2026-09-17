@@ -16,6 +16,7 @@ from spec2smiles.data import (
     SpectrumDataset,
     build_smiles_vocab,
     collate_batch,
+    load_enveda_train_val,
     load_rows,
     prepare_targets,
     write_synthetic_fixture,
@@ -82,22 +83,31 @@ def build_dataloaders(cfg: dict[str, Any], vocab: SmilesVocab | None = None):
     source = data_cfg.get("source", "auto")
     decode_mode = get_decode_mode(cfg)
 
-    train_rows = load_rows(
-        source=source,
-        tsv_path=data_cfg.get("tsv_path"),
-        hf_repo=data_cfg.get("hf_repo", "roman-bushuiev/MassSpecGym"),
-        hf_file=data_cfg.get("hf_file", "data/MassSpecGym1.5.tsv"),
-        fold=data_cfg.get("fold_train", "train"),
-        max_samples=data_cfg.get("max_train_samples"),
-    )
-    val_rows = load_rows(
-        source=source,
-        tsv_path=data_cfg.get("tsv_path"),
-        hf_repo=data_cfg.get("hf_repo", "roman-bushuiev/MassSpecGym"),
-        hf_file=data_cfg.get("hf_file", "data/MassSpecGym1.5.tsv"),
-        fold=data_cfg.get("fold_val", "val"),
-        max_samples=data_cfg.get("max_val_samples"),
-    )
+    if source in ("enveda", "enveda_parquet", "kaggle"):
+        enveda_dir = data_cfg.get("enveda_dir") or data_cfg.get("tsv_path")
+        train_rows, val_rows = load_enveda_train_val(
+            data_dir=enveda_dir,
+            max_train_samples=data_cfg.get("max_train_samples", 5000),
+            max_val_samples=data_cfg.get("max_val_samples", 500),
+            seed=int(cfg.get("seed", 42)),
+        )
+    else:
+        train_rows = load_rows(
+            source=source,
+            tsv_path=data_cfg.get("tsv_path"),
+            hf_repo=data_cfg.get("hf_repo", "roman-bushuiev/MassSpecGym"),
+            hf_file=data_cfg.get("hf_file", "data/MassSpecGym1.5.tsv"),
+            fold=data_cfg.get("fold_train", "train"),
+            max_samples=data_cfg.get("max_train_samples"),
+        )
+        val_rows = load_rows(
+            source=source,
+            tsv_path=data_cfg.get("tsv_path"),
+            hf_repo=data_cfg.get("hf_repo", "roman-bushuiev/MassSpecGym"),
+            hf_file=data_cfg.get("hf_file", "data/MassSpecGym1.5.tsv"),
+            fold=data_cfg.get("fold_val", "val"),
+            max_samples=data_cfg.get("max_val_samples"),
+        )
     train_rows = prepare_targets(train_rows, decode_mode=decode_mode)
     val_rows = prepare_targets(val_rows, decode_mode=decode_mode)
     if not val_rows:

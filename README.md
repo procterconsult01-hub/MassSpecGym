@@ -120,6 +120,43 @@ MassSpecGym/
   requirements.txt
 ```
 
+
+
+## Enveda CASMI 2026 (Kaggle)
+
+Competition: [`enveda-CASMI26-molecule-id-mass-spectra`](https://www.kaggle.com/competitions/enveda-CASMI26-molecule-id-mass-spectra)
+
+Local data (already downloaded):
+
+```
+data/kaggle/enveda-casmi26/
+  train.parquet      # ~2.54M spectra; target = normalized_smiles
+  test.parquet       # 1213 spectra, 400 unique molecule_id
+  sample_submission.csv  # molecule_id, smiles (25 candidates joined by ';')
+```
+
+Peaks map to the existing spectrum encoding (`ms2_mzs` → `mzs`, `ms2_normalized_intensities` → `intensities`). Multiple test spectra can share one `molecule_id`; the submission must have **one row per molecule_id** with exactly **25** semicolon-separated SMILES.
+
+### Smoke train (CPU, small subset)
+
+```bash
+source .venv/bin/activate
+python scripts/train.py --config configs/enveda_cpu_smoke.yaml
+```
+
+Config defaults: 5k train / 500 val, 2 epochs (capped at 200 steps), `decode_mode: selfies`, checkpoint `artifacts/checkpoints/enveda_cpu_smoke.pt`.
+
+### Kaggle predict / submission
+
+```bash
+python scripts/predict_kaggle.py \
+  --checkpoint artifacts/checkpoints/enveda_cpu_smoke.pt \
+  --config configs/enveda_cpu_smoke.yaml \
+  --output artifacts/submissions/enveda_smoke.csv
+```
+
+The script beam-decodes every test spectrum, aggregates candidates per `molecule_id`, keeps top-25 unique (prefer RDKit-valid), pads with `CCO`, and writes a CSV matching `sample_submission` columns/order.
+
 ## Citations
 
 ```bibtex

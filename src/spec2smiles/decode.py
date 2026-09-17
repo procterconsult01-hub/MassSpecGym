@@ -200,6 +200,82 @@ def _beam_one(
     return candidates[best_i]
 
 
+
+
+@torch.no_grad()
+def beam_candidates_one(
+    model: "Spec2SmilesModel",
+    vocab: "SmilesVocab",
+    mz_bin_ids: torch.Tensor,
+    intensity: torch.Tensor,
+    mz_norm: torch.Tensor,
+    peak_mask: torch.Tensor,
+    beam_size: int = 10,
+    max_len: int = 128,
+    precursor_mz: Optional[torch.Tensor] = None,
+    decode_mode: str = "smiles",
+) -> list[tuple[float, str]]:
+    """
+    Return all unique beam candidates as (length-normalized score, SMILES) pairs,
+    sorted best-first. Converts SELFIES→SMILES when decode_mode=selfies.
+    """
+    if beam_size is None or beam_size < 1:
+        beam_size = 1
+    device = mz_bin_ids.device
+    memory = model.encode(mz_bin_ids, intensity, mz_norm, peak_mask, precursor_mz=precursor_mz)
+    bos = torch.tensor([[vocab.bos_id]], dtype=torch.long, device=device)
+    beams: list[tuple[float, torch.Tensor, bool]] = [(0.0, bos, False)]
+    completed: list[tuple[float, torch.Tensor]] = []
+
+    for _ in range(max_len - 1):
+        cand_next: list[tuple[float, torch.Tensor, bool]] = []
+        active = [(s, y, f) for s, y, f in beams if not f]
+        if not active:
+            break
+        ys = torch.cat([y for _, y, _ in active], dim=0)
+        scores = [s for s, _, _ in active]
+        mem = memory.expand(ys.size(0), -1, -1)
+        pmask = peak_mask.expand(ys.size(0), -1)
+        tgt_pad = ys == vocab.pad_id
+        logits = model.decode(ys, mem, pmask, tgt_key_padding_mask=tgt_pad)
+        log_probs = F.log_softmax(logits[:, -1, :], dim=-1)
+        topk = min(beam_size, log_probs.size(-1))
+        vals, idxs = log_probs.topk(topk, dim=-1)
+        for a in range(ys.size(0)):
+            for k in range(topk):
+                tok = int(idxs[a, k].item())
+                new_score = scores[a] + float(vals[a, k].item())
+                new_y = torch.cat(
+                    [ys[a : a + 1], torch.tensor([[tok]], device=device, dtype=torch.long)],
+                    dim=1,
+                )
+                finished = tok == vocab.eos_id
+                if finished:
+                    completed.append((new_score, new_y))
+                else:
+                    cand_next.append((new_score, new_y, False))
+        cand_next.sort(key=lambda x: x[0], reverse=True)
+        beams = cand_next[:beam_size]
+        if not beams and completed:
+            break
+
+    if not completed:
+        completed = [(s, y) for s, y, _ in beams]
+
+    best_by_text: dict[str, float] = {}
+    for score, y in completed:
+        text_out = vocab.decode(y[0])
+        length = max(y.size(1) - 1, 1)
+        sc = score / length
+        if decode_mode == "selfies":
+            smi = selfies_to_smiles(text_out)
+            text_out = smi if smi is not None else text_out
+        if text_out not in best_by_text or sc > best_by_text[text_out]:
+            best_by_text[text_out] = sc
+    ranked = sorted(best_by_text.items(), key=lambda kv: kv[1], reverse=True)
+    return [(sc, smi) for smi, sc in ranked]
+
+
 def postprocess_prediction(text: str, decode_mode: str = "smiles") -> str:
     """Convert model output string to SMILES for metrics / display."""
     mode = (decode_mode or "smiles").lower()

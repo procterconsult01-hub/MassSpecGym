@@ -20,8 +20,14 @@ htmlcov/
 .DS_Store
 
 # Artifacts & data dumps
-artifacts/
+artifacts/**
+!artifacts/checkpoints/
 !artifacts/checkpoints/.gitkeep
+!artifacts/reports/
+!artifacts/reports/**
+!artifacts/submissions/
+!artifacts/submissions/**
+artifacts/submissions/**/*.pt
 data/MassSpecGym*.tsv
 data/cache/
 data/downloads/
@@ -33,5 +39,5 @@ wandb/
 runs/
 lightning_logs/
 
-!artifacts/reports/
-!artifacts/reports/**
+# Enveda / Kaggle bulky parquet (sample_submission.csv OK to track)
+data/kaggle/**/*.parquet
