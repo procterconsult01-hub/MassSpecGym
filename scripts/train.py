@@ -24,6 +24,24 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--batch-size", type=int, default=None)
     p.add_argument("--max-steps", type=int, default=None)
     p.add_argument("--device", type=str, default=None)
+    p.add_argument(
+        "--max-train-samples",
+        type=int,
+        default=None,
+        help="Cap training rows (subset / CPU runs)",
+    )
+    p.add_argument(
+        "--max-val-samples",
+        type=int,
+        default=None,
+        help="Cap validation rows (subset / CPU runs)",
+    )
+    p.add_argument(
+        "--checkpoint-name",
+        type=str,
+        default=None,
+        help="Override train.checkpoint_name",
+    )
     return p.parse_args()
 
 
@@ -43,6 +61,12 @@ def main() -> None:
         cfg["train"]["max_steps"] = args.max_steps
     if args.device:
         cfg["device"] = args.device
+    if args.max_train_samples is not None:
+        cfg["data"]["max_train_samples"] = args.max_train_samples
+    if args.max_val_samples is not None:
+        cfg["data"]["max_val_samples"] = args.max_val_samples
+    if args.checkpoint_name:
+        cfg["train"]["checkpoint_name"] = args.checkpoint_name
     ckpt = train_loop(cfg, smoke=args.smoke)
     print(f"DONE checkpoint={ckpt}")
 
