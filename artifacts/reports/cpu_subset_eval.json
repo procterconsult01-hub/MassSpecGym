@@ -1,0 +1,30 @@
+{
+  "n": 64,
+  "exact_match": 0.0,
+  "validity": 0.0,
+  "tanimoto_mean": null,
+  "rdkit_available": true,
+  "loss": 1.4735572338104248,
+  "examples": [
+    {
+      "true": "CC(C)C[C@H]1C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N1C",
+      "pred": "CCC(=O)C(C)C(=O)C(C)C)C(C)C(C)C(=O)C(C)C)C(=O)C(C)C(C(=O)C)C(C)C)C)C)C)C)C(C(C(C(C(C(C)C)C)C)C(C(C(C)C(C)C)C)C(C(C(C)C)C)C)C)C)"
+    },
+    {
+      "true": "CC(C)C[C@H]1C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N1C",
+      "pred": "CCC(=O)C(C)C(=O)C)C)C(C(=O)C)C(=O)C(C)C(=O)C(C)C)C)C(C(C)C)C(C)C)C)C)C)C)C(C(C(C(C(C(C)C)C)C)C(C(C)C)C(C)C)C)C(C(C(C)C)C)C)C)C)"
+    },
+    {
+      "true": "CC(C)C[C@H]1C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N1C",
+      "pred": "CCCC(=O)C(C)C(C)C)C)C(C(=C)C)C(=O)C(C(C)C)C(=O)C)C)C(C(C)C)C(C)C)C)C)C)C(C(C)C(C(C(C(C)C)C)C)C(C(C(C)C(C)C)C)C(C(C(C)C)C)C)C)C)"
+    },
+    {
+      "true": "CC(C)C[C@H]1C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N1C",
+      "pred": "CCCC(=O)C(C)C(C)C)C)C(C(=C)C)C(=O)C(C(C)C)C(=O)C)C)C(C(C)C)C(C)C)C)C)C)C(C(C)C(C(C(C(C)C)C)C)C(C(C(C)C(C)C)C)C(C(C(C)C)C)C)C)C)"
+    },
+    {
+      "true": "CC(C)C[C@H]1C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N1C",
+      "pred": "CCC(=O)C(C)C(=O)C(C)C)C(C)C(C)C(=O)C(C)C)C(=O)C(C)C(C(=O)C)C(C)C)C)C)C)C)C(C(C(C(C(C(C)C)C)C)C(C(C(C)C(C)C)C)C(C(C(C)C)C)C)C)C)"
+    }
+  ]
+}
