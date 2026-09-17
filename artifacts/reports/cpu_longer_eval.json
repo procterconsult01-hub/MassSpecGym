@@ -1,0 +1,32 @@
+{
+  "n": 64,
+  "exact_match": 0.0,
+  "validity": 1.0,
+  "tanimoto_mean": 0.1384089375241787,
+  "rdkit_available": true,
+  "loss": 1.7783136665821075,
+  "beam_size": 5,
+  "decode_mode": "selfies",
+  "examples": [
+    {
+      "true": "CC(C)C[C@H]1C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N1C",
+      "pred": "CCCCC/C=C\\C/C=C\\C/C=C\\C/C=C\\C/C=C\\C/C=C\\C/C=C\\C/C=C\\C/C=C\\CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+    },
+    {
+      "true": "CC(C)C[C@H]1C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N1C",
+      "pred": "CCC/C=C\\C/C=C\\C/C=C\\C/C=C\\C/C=C\\C/C=C\\C/C=C\\C/C=C\\C/C=C\\C/C=C\\C/C=C\\CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+    },
+    {
+      "true": "CC(C)C[C@H]1C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N1C",
+      "pred": "CCCCC/C=C\\C/C=C\\C/C=C\\C/C=C\\CCCC(=O)O[C@H1](COC(=O)CCCCCCCCCCCCCCC)CCC=O"
+    },
+    {
+      "true": "CC(C)C[C@H]1C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N1C",
+      "pred": "CCCCC/C=C\\C/C=C\\C/C=C\\C/C=C\\CCCC(=O)O[C@H1](COC(=O)CCCCCCCCCCCCCCC)CCC=O"
+    },
+    {
+      "true": "CC(C)C[C@H]1C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N(C)[C@@H](CC(C)C)C(=O)O[C@H](C(C)C)C(=O)N1C",
+      "pred": "CCCCC/C=C\\C/C=C\\C/C=C\\C/C=C\\C/C=C\\C/C=C\\C/C=C\\C/C=C\\C/C=C\\CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC"
+    }
+  ]
+}

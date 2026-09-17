@@ -10,9 +10,14 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "src"))
 
-from spec2smiles.data import SpectrumDataset, load_rows  # noqa: E402
+from spec2smiles.data import SpectrumDataset, load_rows, prepare_targets  # noqa: E402
 from spec2smiles.decode import decode_one  # noqa: E402
-from spec2smiles.train import load_checkpoint, resolve_device, ensure_fixture  # noqa: E402
+from spec2smiles.train import (  # noqa: E402
+    ensure_fixture,
+    get_decode_mode,
+    load_checkpoint,
+    resolve_device,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -28,6 +33,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--device", type=str, default="auto")
     p.add_argument("--max-len", type=int, default=128)
     p.add_argument("--temperature", type=float, default=1.0)
+    p.add_argument("--beam-size", type=int, default=None)
     return p.parse_args()
 
 
@@ -47,6 +53,9 @@ def main() -> None:
 
     model, vocab, cfg = load_checkpoint(ckpt, device=device)
     data_cfg = cfg.get("data", {})
+    decode_mode = get_decode_mode(cfg)
+    infer_cfg = cfg.get("infer", {})
+    beam_size = args.beam_size if args.beam_size is not None else int(infer_cfg.get("beam_size", 1))
     rows = load_rows(
         source=args.source,
         tsv_path=args.tsv or data_cfg.get("tsv_path"),
@@ -55,6 +64,7 @@ def main() -> None:
     )
     if not rows:
         raise RuntimeError("No spectrum rows loaded")
+    rows = prepare_targets(rows, decode_mode=decode_mode)
     idx = args.index % len(rows)
     ds = SpectrumDataset(
         rows,
@@ -72,11 +82,15 @@ def main() -> None:
         device=device,
         max_len=args.max_len,
         temperature=args.temperature,
+        beam_size=beam_size,
+        prefer_valid=bool(infer_cfg.get("prefer_valid", True)),
+        decode_mode=decode_mode,
     )
     true = sample["smiles"]
     print(f"identifier: {sample['identifier']}")
     print(f"true_smiles: {true}")
     print(f"pred_smiles: {pred}")
+    print(f"beam_size: {beam_size} decode_mode: {decode_mode}")
 
 
 if __name__ == "__main__":

@@ -21,6 +21,8 @@ dependencies = [
 
 [project.optional-dependencies]
 rdkit = ["rdkit>=2023.9.1"]
+selfies = ["selfies>=2.1.0"]
+chem = ["rdkit>=2023.9.1", "selfies>=2.1.0"]
 # Official MassSpecGym package (PyTorch Lightning stack). Optional; we have HF TSV fallback.
 massspecgym = ["massspecgym @ git+https://github.com/pluskal-lab/MassSpecGym.git"]
 dev = ["pytest>=7.0"]

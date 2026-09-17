@@ -1,4 +1,4 @@
-"""Small Transformer: spectrum peak encoder → autoregressive SMILES decoder."""
+"""Small Transformer: spectrum peak encoder → autoregressive SMILES/SELFIES decoder."""
 
 from __future__ import annotations
 
@@ -26,7 +26,6 @@ class PeakEmbedding(nn.Module):
         intensity: torch.Tensor,
         mz_norm: torch.Tensor,
     ) -> torch.Tensor:
-        # [B, P]
         e = self.mz_embed(mz_bin_ids)
         cont = self.cont_proj(torch.stack([intensity, mz_norm], dim=-1))
         x = self.fuse(torch.cat([e, cont], dim=-1))
@@ -42,7 +41,7 @@ class PositionalEncoding(nn.Module):
         div = torch.exp(torch.arange(0, d_model, 2).float() * (-math.log(10000.0) / d_model))
         pe[:, 0::2] = torch.sin(pos * div)
         pe[:, 1::2] = torch.cos(pos * div)
-        self.register_buffer("pe", pe.unsqueeze(0), persistent=False)  # [1, L, D]
+        self.register_buffer("pe", pe.unsqueeze(0), persistent=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x + self.pe[:, : x.size(1)]
@@ -63,16 +62,26 @@ class Spec2SmilesModel(nn.Module):
         peak_embed_dim: int = 32,
         max_smiles_len: int = 128,
         pad_id: int = 0,
+        use_precursor_mass: bool = True,
+        mz_max: float = 1000.0,
     ):
         super().__init__()
         self.d_model = d_model
         self.pad_id = pad_id
         self.max_smiles_len = max_smiles_len
+        self.use_precursor_mass = use_precursor_mass
+        self.mz_max = mz_max
 
         self.peak_emb = PeakEmbedding(mz_bins, d_model, peak_embed_dim)
         self.token_emb = nn.Embedding(vocab_size, d_model, padding_idx=pad_id)
         self.pos_enc = PositionalEncoding(d_model, max_len=max(512, max_smiles_len + 8), dropout=dropout)
         self.peak_pos = PositionalEncoding(d_model, max_len=512, dropout=dropout)
+        # Light formula/mass conditioning: broadcast precursor m/z embedding onto peaks
+        self.mass_proj = nn.Sequential(
+            nn.Linear(1, peak_embed_dim),
+            nn.GELU(),
+            nn.Linear(peak_embed_dim, d_model),
+        )
 
         enc_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
@@ -109,10 +118,16 @@ class Spec2SmilesModel(nn.Module):
         intensity: torch.Tensor,
         mz_norm: torch.Tensor,
         peak_mask: torch.Tensor,
+        precursor_mz: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
         x = self.peak_emb(mz_bin_ids, intensity, mz_norm)
+        if self.use_precursor_mass and precursor_mz is not None:
+            # precursor_mz: [B] or [B, 1] → normalize by mz_max
+            pmz = precursor_mz.view(-1).float() / max(self.mz_max, 1e-6)
+            pmz = pmz.clamp(0.0, 2.0).unsqueeze(-1)  # [B, 1]
+            mass_emb = self.mass_proj(pmz)  # [B, D]
+            x = x + mass_emb.unsqueeze(1)
         x = self.peak_pos(x)
-        # peak_mask True = pad → src_key_padding_mask
         memory = self.encoder(x, src_key_padding_mask=peak_mask)
         return memory
 
@@ -123,7 +138,6 @@ class Spec2SmilesModel(nn.Module):
         peak_mask: torch.Tensor,
         tgt_key_padding_mask: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        # tgt_ids: [B, T] teacher-forced input (usually smiles[:-1])
         emb = self.token_emb(tgt_ids) * math.sqrt(self.d_model)
         emb = self.pos_enc(emb)
         causal = nn.Transformer.generate_square_subsequent_mask(
@@ -146,13 +160,11 @@ class Spec2SmilesModel(nn.Module):
         peak_mask: torch.Tensor,
         smiles_ids: torch.Tensor,
         smiles_mask: Optional[torch.Tensor] = None,
+        precursor_mz: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
-        """
-        Teacher-forced training forward.
-        smiles_ids: [B, L] including BOS ... EOS (padded)
-        Returns logits [B, L-1, V] predicting smiles_ids[:, 1:]
-        """
-        memory = self.encode(mz_bin_ids, intensity, mz_norm, peak_mask)
+        memory = self.encode(
+            mz_bin_ids, intensity, mz_norm, peak_mask, precursor_mz=precursor_mz
+        )
         tgt_in = smiles_ids[:, :-1]
         tgt_pad = smiles_mask[:, :-1] if smiles_mask is not None else (tgt_in == self.pad_id)
         logits = self.decode(tgt_in, memory, peak_mask, tgt_key_padding_mask=tgt_pad)
@@ -163,7 +175,6 @@ class Spec2SmilesModel(nn.Module):
         logits: torch.Tensor,
         smiles_ids: torch.Tensor,
     ) -> torch.Tensor:
-        # predict tokens 1..L-1
         target = smiles_ids[:, 1:]
         return F.cross_entropy(
             logits.reshape(-1, logits.size(-1)),

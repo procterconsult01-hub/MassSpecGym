@@ -17,10 +17,11 @@ from spec2smiles.data import (
     build_smiles_vocab,
     collate_batch,
     load_rows,
+    prepare_targets,
     write_synthetic_fixture,
     SmilesVocab,
 )
-from spec2smiles.decode import greedy_decode
+from spec2smiles.decode import decode_batch
 from spec2smiles.metrics import evaluate_predictions
 from spec2smiles.model import Spec2SmilesModel
 
@@ -71,10 +72,15 @@ def ensure_fixture(root: Path) -> Path:
     return path
 
 
+def get_decode_mode(cfg: dict[str, Any]) -> str:
+    return str(cfg.get("data", {}).get("decode_mode", "smiles")).lower()
+
+
 def build_dataloaders(cfg: dict[str, Any], vocab: SmilesVocab | None = None):
     data_cfg = cfg["data"]
     train_cfg = cfg["train"]
     source = data_cfg.get("source", "auto")
+    decode_mode = get_decode_mode(cfg)
 
     train_rows = load_rows(
         source=source,
@@ -92,12 +98,16 @@ def build_dataloaders(cfg: dict[str, Any], vocab: SmilesVocab | None = None):
         fold=data_cfg.get("fold_val", "val"),
         max_samples=data_cfg.get("max_val_samples"),
     )
+    train_rows = prepare_targets(train_rows, decode_mode=decode_mode)
+    val_rows = prepare_targets(val_rows, decode_mode=decode_mode)
     if not val_rows:
-        # synthetic may use 'val'; if empty, take a slice of train
         val_rows = train_rows[: max(1, min(8, len(train_rows) // 5))]
 
     if vocab is None:
-        vocab = build_smiles_vocab([r["smiles"] for r in train_rows])
+        vocab = build_smiles_vocab(
+            [r["target"] for r in train_rows],
+            decode_mode=decode_mode,
+        )
 
     ds_kwargs = dict(
         vocab=vocab,
@@ -140,6 +150,8 @@ def build_model(cfg: dict[str, Any], vocab: SmilesVocab) -> Spec2SmilesModel:
         peak_embed_dim=m.get("peak_embed_dim", 32),
         max_smiles_len=d.get("max_smiles_len", 128),
         pad_id=vocab.pad_id,
+        use_precursor_mass=bool(m.get("use_precursor_mass", True)),
+        mz_max=float(d.get("mz_max", 1000.0)),
     )
 
 
@@ -169,7 +181,12 @@ def load_checkpoint(
     vocab = SmilesVocab.from_dict(payload["vocab"])
     cfg = payload["config"]
     model = build_model(cfg, vocab)
-    model.load_state_dict(payload["model_state"])
+    # Allow loading older checkpoints missing mass_proj
+    missing, unexpected = model.load_state_dict(payload["model_state"], strict=False)
+    if missing:
+        print(f"checkpoint missing keys (ok if upgraded): {missing}")
+    if unexpected:
+        print(f"checkpoint unexpected keys: {unexpected}")
     model.to(device)
     model.eval()
     return model, vocab, cfg
@@ -183,6 +200,9 @@ def evaluate_loader(
     device: torch.device,
     max_batches: int | None = None,
     max_len: int = 128,
+    beam_size: int = 1,
+    decode_mode: str = "smiles",
+    prefer_valid: bool = True,
 ) -> dict[str, Any]:
     model.eval()
     preds: list[str] = []
@@ -198,16 +218,33 @@ def evaluate_loader(
         pmask = batch["peak_mask"].to(device)
         smi = batch["smiles_ids"].to(device)
         smask = batch["smiles_mask"].to(device)
-        logits = model(mz, inten, mzn, pmask, smi, smask)
+        pmz = batch.get("precursor_mz")
+        if pmz is not None:
+            pmz = pmz.to(device)
+        logits = model(mz, inten, mzn, pmask, smi, smask, precursor_mz=pmz)
         loss = model.loss(logits, smi)
         total_loss += float(loss.item()) * smi.size(0)
         n_tok += smi.size(0)
-        decoded = greedy_decode(model, vocab, mz, inten, mzn, pmask, max_len=max_len)
+        decoded = decode_batch(
+            model,
+            vocab,
+            mz,
+            inten,
+            mzn,
+            pmask,
+            max_len=max_len,
+            beam_size=beam_size,
+            precursor_mz=pmz,
+            prefer_valid=prefer_valid,
+            decode_mode=decode_mode,
+        )
         preds.extend(decoded)
         trues.extend(batch["smiles"])
     metrics = evaluate_predictions(preds, trues)
     metrics["loss"] = total_loss / max(n_tok, 1)
     metrics["examples"] = list(zip(trues[:5], preds[:5]))
+    metrics["beam_size"] = beam_size
+    metrics["decode_mode"] = decode_mode
     return metrics
 
 
@@ -219,6 +256,7 @@ def train_loop(cfg: dict[str, Any], smoke: bool = False) -> Path:
 
     set_seed(int(cfg.get("seed", 42)))
     device = resolve_device(cfg.get("device", "auto"))
+    decode_mode = get_decode_mode(cfg)
     train_loader, val_loader, vocab, _, _ = build_dataloaders(cfg)
     model = build_model(cfg, vocab).to(device)
     opt = torch.optim.AdamW(
@@ -237,11 +275,21 @@ def train_loop(cfg: dict[str, Any], smoke: bool = False) -> Path:
     ckpt_name = cfg["train"].get("checkpoint_name", "spec2smiles_best.pt")
     ckpt_path = ckpt_dir / ("smoke_" + ckpt_name if smoke else ckpt_name)
 
-    print(f"device={device} params={model.count_parameters():,} vocab={len(vocab)} "
-          f"train_batches={len(train_loader)} smoke={smoke}")
+    infer_cfg = cfg.get("infer", {})
+    beam_size = int(infer_cfg.get("beam_size", 1))
+    # During epoch val, use smaller beam for speed unless smoke/longer explicitly wants it
+    val_beam = int(infer_cfg.get("val_beam_size", min(beam_size, 3 if not smoke else 1)))
+    max_len = int(infer_cfg.get("max_len", 128))
+
+    print(
+        f"device={device} params={model.count_parameters():,} vocab={len(vocab)} "
+        f"decode_mode={decode_mode} train_batches={len(train_loader)} "
+        f"beam={beam_size} val_beam={val_beam} smoke={smoke}"
+    )
 
     global_step = 0
     best_val = float("inf")
+    history: list[dict[str, Any]] = []
     for epoch in range(1, epochs + 1):
         model.train()
         pbar = tqdm(train_loader, desc=f"epoch {epoch}/{epochs}", leave=False)
@@ -253,9 +301,12 @@ def train_loop(cfg: dict[str, Any], smoke: bool = False) -> Path:
             pmask = batch["peak_mask"].to(device)
             smi = batch["smiles_ids"].to(device)
             smask = batch["smiles_mask"].to(device)
+            pmz = batch.get("precursor_mz")
+            if pmz is not None:
+                pmz = pmz.to(device)
 
             opt.zero_grad(set_to_none=True)
-            logits = model(mz, inten, mzn, pmask, smi, smask)
+            logits = model(mz, inten, mzn, pmask, smi, smask, precursor_mz=pmz)
             loss = model.loss(logits, smi)
             loss.backward()
             if grad_clip > 0:
@@ -271,12 +322,26 @@ def train_loop(cfg: dict[str, Any], smoke: bool = False) -> Path:
                 break
 
         val_metrics = evaluate_loader(
-            model, val_loader, vocab, device,
+            model,
+            val_loader,
+            vocab,
+            device,
             max_batches=5 if smoke else None,
-            max_len=int(cfg.get("infer", {}).get("max_len", 128)),
+            max_len=max_len,
+            beam_size=val_beam,
+            decode_mode=decode_mode,
         )
+        row = {
+            "epoch": epoch,
+            "train_loss": running / max(step, 1),
+            "val_loss": val_metrics["loss"],
+            "exact_match": val_metrics["exact_match"],
+            "validity": val_metrics["validity"],
+            "tanimoto_mean": val_metrics.get("tanimoto_mean"),
+        }
+        history.append(row)
         print(
-            f"epoch={epoch} train_loss≈{running / max(step, 1):.4f} "
+            f"epoch={epoch} train_loss≈{row['train_loss']:.4f} "
             f"val_loss={val_metrics['loss']:.4f} "
             f"exact={val_metrics['exact_match']:.3f} "
             f"validity={val_metrics['validity']}"
@@ -288,16 +353,26 @@ def train_loop(cfg: dict[str, Any], smoke: bool = False) -> Path:
                 model,
                 vocab,
                 cfg,
-                extra={"epoch": epoch, "val": val_metrics, "global_step": global_step},
+                extra={
+                    "epoch": epoch,
+                    "val": {k: v for k, v in val_metrics.items() if k != "examples"},
+                    "global_step": global_step,
+                    "history": history,
+                },
             )
             print(f"saved checkpoint → {ckpt_path}")
 
         if max_steps is not None and global_step >= int(max_steps):
             break
 
-    # Always ensure a checkpoint exists after smoke
     if not ckpt_path.exists():
-        save_checkpoint(ckpt_path, model, vocab, cfg, extra={"epoch": epochs, "global_step": global_step})
+        save_checkpoint(
+            ckpt_path,
+            model,
+            vocab,
+            cfg,
+            extra={"epoch": epochs, "global_step": global_step, "history": history},
+        )
         print(f"saved checkpoint → {ckpt_path}")
 
     return ckpt_path

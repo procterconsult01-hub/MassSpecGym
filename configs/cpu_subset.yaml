@@ -14,6 +14,7 @@ data:
   fold_train: train
   fold_val: val
   max_train_samples: 2000
+  decode_mode: smiles  # smiles | selfies
   max_val_samples: 400
 
 model:
@@ -24,6 +25,7 @@ model:
   dim_feedforward: 256
   dropout: 0.1
   peak_embed_dim: 32
+  use_precursor_mass: true
 
 train:
   batch_size: 16
@@ -53,6 +55,8 @@ infer:
   max_len: 128
   beam_size: 1
   temperature: 1.0
+  prefer_valid: true
+  val_beam_size: 1
 
 eval:
   max_samples: 64

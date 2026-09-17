@@ -110,6 +110,7 @@ def make_synthetic_rows(n: int = 64, seed: int = 42) -> list[dict[str, Any]]:
                 "mzs": mzs,
                 "intensities": intensities,
                 "smiles": smi,
+                "formula": None,
                 "precursor_mz": float(mzs[-1]) + 1.0 if mzs else 100.0,
                 "fold": fold,
             }
@@ -189,6 +190,7 @@ def load_tsv_rows(
     fold_col = cols.get("fold")
     id_col = cols.get("identifier", cols.get("id"))
     prec_col = cols.get("precursor_mz")
+    formula_col = cols.get("formula")
     if mz_col is None or int_col is None or smi_col is None:
         raise ValueError(
             f"TSV missing required columns. Found: {list(df.columns)}. "
@@ -206,12 +208,16 @@ def load_tsv_rows(
         if len(intensities) != len(mzs):
             n = min(len(mzs), len(intensities))
             mzs, intensities = mzs[:n], intensities[:n]
+        formula = None
+        if formula_col and pd.notna(r[formula_col]):
+            formula = str(r[formula_col]).strip()
         rows.append(
             {
                 "identifier": str(r[id_col]) if id_col else f"row_{len(rows)}",
                 "mzs": mzs,
                 "intensities": intensities,
                 "smiles": smi,
+                "formula": formula,
                 "precursor_mz": float(r[prec_col]) if prec_col and pd.notna(r[prec_col]) else None,
                 "fold": str(r[fold_col]) if fold_col else "train",
             }
@@ -291,9 +297,10 @@ def load_rows(
 
 
 class SmilesVocab:
-    """Character-level SMILES vocabulary."""
+    """Character-level SMILES or token-level SELFIES vocabulary."""
 
-    def __init__(self, chars: list[str]):
+    def __init__(self, chars: list[str], token_level: bool = False):
+        self.token_level = token_level
         self.itos = list(SPECIAL_TOKENS) + sorted(set(chars))
         self.stoi = {t: i for i, t in enumerate(self.itos)}
 
@@ -316,11 +323,18 @@ class SmilesVocab:
     def __len__(self) -> int:
         return len(self.itos)
 
+    def _tokenize(self, text: str) -> list[str]:
+        if self.token_level:
+            from spec2smiles.chem_utils import split_selfies_tokens
+
+            return split_selfies_tokens(text)
+        return list(text)
+
     def encode(self, smiles: str, max_len: int, add_special: bool = True) -> list[int]:
         ids: list[int] = []
         if add_special:
             ids.append(self.bos_id)
-        for ch in smiles:
+        for ch in self._tokenize(smiles):
             ids.append(self.stoi.get(ch, self.unk_id))
             if max_len and len(ids) >= max_len - (1 if add_special else 0):
                 break
@@ -348,25 +362,61 @@ class SmilesVocab:
         return "".join(chars)
 
     def to_dict(self) -> dict[str, Any]:
-        return {"itos": self.itos}
+        return {"itos": self.itos, "token_level": self.token_level}
 
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "SmilesVocab":
         itos = d["itos"]
-        # Rebuild without duplicating specials already in itos
+        token_level = bool(d.get("token_level", False))
         chars = [t for t in itos if t not in SPECIAL_TOKENS]
-        v = cls(chars)
-        # Preserve exact itos order from checkpoint
+        v = cls(chars, token_level=token_level)
         v.itos = list(itos)
         v.stoi = {t: i for i, t in enumerate(v.itos)}
         return v
 
 
-def build_smiles_vocab(smiles_list: list[str]) -> SmilesVocab:
+def build_smiles_vocab(smiles_list: list[str], decode_mode: str = "smiles") -> SmilesVocab:
+    mode = (decode_mode or "smiles").lower()
+    if mode == "selfies":
+        from spec2smiles.chem_utils import split_selfies_tokens
+
+        tokens: set[str] = set()
+        for s in smiles_list:
+            tokens.update(split_selfies_tokens(s))
+        return SmilesVocab(sorted(tokens), token_level=True)
     chars: set[str] = set()
     for s in smiles_list:
         chars.update(s)
-    return SmilesVocab(sorted(chars))
+    return SmilesVocab(sorted(chars), token_level=False)
+
+
+def prepare_targets(
+    rows: list[dict[str, Any]],
+    decode_mode: str = "smiles",
+) -> list[dict[str, Any]]:
+    """
+    Attach training target string.
+    For decode_mode=selfies: convert SMILES→SELFIES; drop rows that fail.
+    Always keeps original smiles for metrics.
+    """
+    mode = (decode_mode or "smiles").lower()
+    out: list[dict[str, Any]] = []
+    if mode != "selfies":
+        for r in rows:
+            rr = dict(r)
+            rr["target"] = r["smiles"]
+            out.append(rr)
+        return out
+    from spec2smiles.chem_utils import smiles_to_selfies
+
+    for r in rows:
+        se = smiles_to_selfies(r["smiles"])
+        if se is None:
+            continue
+        rr = dict(r)
+        rr["target"] = se
+        out.append(rr)
+    return out
 
 
 def peaks_to_tensors(
@@ -433,12 +483,17 @@ class SpectrumDataset(Dataset):
         mz_bin_ids, intensity, mz_norm, peak_mask = peaks_to_tensors(
             r["mzs"], r["intensities"], self.max_peaks, self.mz_bins, self.mz_max
         )
-        ids = self.vocab.encode(r["smiles"], max_len=self.max_smiles_len)
-        # pad
+        target = r.get("target", r["smiles"])
+        ids = self.vocab.encode(target, max_len=self.max_smiles_len)
         smi = torch.full((self.max_smiles_len,), self.vocab.pad_id, dtype=torch.long)
         n = min(len(ids), self.max_smiles_len)
         smi[:n] = torch.tensor(ids[:n], dtype=torch.long)
         smi_mask = smi == self.vocab.pad_id
+        pmz = r.get("precursor_mz")
+        precursor = torch.tensor(
+            float(pmz) if pmz is not None else 0.0,
+            dtype=torch.float32,
+        )
         return {
             "mz_bin_ids": mz_bin_ids,
             "intensity": intensity,
@@ -447,13 +502,24 @@ class SpectrumDataset(Dataset):
             "smiles_ids": smi,
             "smiles_mask": smi_mask,
             "smiles": r["smiles"],
+            "target": target,
+            "precursor_mz": precursor,
             "identifier": r.get("identifier", str(idx)),
         }
 
 
 def collate_batch(batch: list[dict]) -> dict[str, Any]:
-    keys_t = ["mz_bin_ids", "intensity", "mz_norm", "peak_mask", "smiles_ids", "smiles_mask"]
+    keys_t = [
+        "mz_bin_ids",
+        "intensity",
+        "mz_norm",
+        "peak_mask",
+        "smiles_ids",
+        "smiles_mask",
+        "precursor_mz",
+    ]
     out: dict[str, Any] = {k: torch.stack([b[k] for b in batch], dim=0) for k in keys_t}
     out["smiles"] = [b["smiles"] for b in batch]
+    out["target"] = [b.get("target", b["smiles"]) for b in batch]
     out["identifier"] = [b["identifier"] for b in batch]
     return out

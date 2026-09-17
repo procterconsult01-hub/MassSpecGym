@@ -1,22 +1,21 @@
-# Default config for MassSpecGym de novo SMILES baseline
+# Longer CPU subset: 10k train / 1k val / 5 epochs, beam=5, SELFIES targets
 seed: 42
-device: auto  # cuda | cpu | auto
+device: cpu
 
 data:
-  source: auto  # auto | synthetic | hf | tsv | massspecgym
-  tsv_path: null  # e.g. data/MassSpecGym1.5.tsv
+  source: tsv
+  tsv_path: data/MassSpecGym1.5.tsv
   hf_repo: roman-bushuiev/MassSpecGym
   hf_file: data/MassSpecGym1.5.tsv
   max_peaks: 100
   max_smiles_len: 128
-  mz_bins: 5000          # discretize m/z into bins for peak tokens
+  mz_bins: 5000
   mz_max: 1000.0
   fold_train: train
   fold_val: val
-  # smoke / tiny subset
-  max_train_samples: null
-  decode_mode: smiles  # smiles | selfies
-  max_val_samples: null
+  max_train_samples: 10000
+  max_val_samples: 1000
+  decode_mode: selfies  # train/decode in SELFIES space → higher validity
 
 model:
   d_model: 128
@@ -26,19 +25,19 @@ model:
   dim_feedforward: 256
   dropout: 0.1
   peak_embed_dim: 32
-  use_precursor_mass: true     # continuous mz/intensity projection width before d_model
+  use_precursor_mass: true
 
 train:
   batch_size: 16
   lr: 3.0e-4
   weight_decay: 1.0e-4
-  epochs: 10
+  epochs: 5
   max_steps: null
   grad_clip: 1.0
   num_workers: 0
-  log_every: 10
+  log_every: 20
   checkpoint_dir: artifacts/checkpoints
-  checkpoint_name: spec2smiles_best.pt
+  checkpoint_name: spec2smiles_cpu_longer.pt
 
 smoke:
   epochs: 2
@@ -54,10 +53,10 @@ smoke:
 
 infer:
   max_len: 128
-  beam_size: 1  # greedy if 1
+  beam_size: 5
+  val_beam_size: 1  # greedy during epoch val; final eval uses beam_size 5
   temperature: 1.0
   prefer_valid: true
-  val_beam_size: 1
 
 eval:
-  max_samples: null
+  max_samples: 64
