@@ -1,0 +1,59 @@
+# Default config for MassSpecGym de novo SMILES baseline
+seed: 42
+device: auto  # cuda | cpu | auto
+
+data:
+  source: auto  # auto | synthetic | hf | tsv | massspecgym
+  tsv_path: null  # e.g. data/MassSpecGym1.5.tsv
+  hf_repo: roman-bushuiev/MassSpecGym
+  hf_file: data/MassSpecGym1.5.tsv
+  max_peaks: 100
+  max_smiles_len: 128
+  mz_bins: 5000          # discretize m/z into bins for peak tokens
+  mz_max: 1000.0
+  fold_train: train
+  fold_val: val
+  # smoke / tiny subset
+  max_train_samples: null
+  max_val_samples: null
+
+model:
+  d_model: 128
+  nhead: 4
+  num_encoder_layers: 2
+  num_decoder_layers: 2
+  dim_feedforward: 256
+  dropout: 0.1
+  peak_embed_dim: 32     # continuous mz/intensity projection width before d_model
+
+train:
+  batch_size: 16
+  lr: 3.0e-4
+  weight_decay: 1.0e-4
+  epochs: 10
+  max_steps: null
+  grad_clip: 1.0
+  num_workers: 0
+  log_every: 10
+  checkpoint_dir: artifacts/checkpoints
+  checkpoint_name: spec2smiles_best.pt
+
+smoke:
+  epochs: 2
+  max_steps: 20
+  batch_size: 8
+  max_train_samples: 32
+  max_val_samples: 8
+  d_model: 64
+  nhead: 2
+  num_encoder_layers: 1
+  num_decoder_layers: 1
+  dim_feedforward: 128
+
+infer:
+  max_len: 128
+  beam_size: 1  # greedy if 1
+  temperature: 1.0
+
+eval:
+  max_samples: null

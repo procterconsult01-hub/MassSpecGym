@@ -1,0 +1,14 @@
+# Core (smoke train / infer work with these)
+torch>=2.0
+numpy>=1.24
+pandas>=2.0
+pyyaml>=6.0
+tqdm>=4.65
+huggingface_hub>=0.20
+
+# Optional chemistry metrics (validity, Tanimoto)
+# rdkit>=2023.9.1
+# or: rdkit-pypi  (older name; prefer rdkit on modern pip)
+
+# Optional: official MassSpecGym Lightning package
+# pip install "massspecgym @ git+https://github.com/pluskal-lab/MassSpecGym.git"
