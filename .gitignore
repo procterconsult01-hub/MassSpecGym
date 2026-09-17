@@ -32,3 +32,6 @@ data/downloads/
 wandb/
 runs/
 lightning_logs/
+
+!artifacts/reports/
+!artifacts/reports/**
