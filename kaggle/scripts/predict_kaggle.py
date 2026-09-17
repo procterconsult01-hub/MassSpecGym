@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader
 from tqdm import tqdm
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT))  # kaggle/spec2smiles lives next to scripts/
 
 from spec2smiles.chem_utils import is_valid_smiles  # noqa: E402
 from spec2smiles.data import (  # noqa: E402

@@ -41,3 +41,18 @@ lightning_logs/
 
 # Enveda / Kaggle bulky parquet (sample_submission.csv OK to track)
 data/kaggle/**/*.parquet
+
+# Secrets / API tokens (never commit)
+**/kaggle.json
+**/.kaggle/
+*.token
+*.tokens
+tokens/
+secrets/
+credentials.json
+**/credentials.json
+
+# Jupyter — track notebooks/*.ipynb; ignore checkpoints only
+.ipynb_checkpoints/
+**/ipynb_checkpoints/
+notebooks/.ipynb_checkpoints/

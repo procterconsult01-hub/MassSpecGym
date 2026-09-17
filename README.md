@@ -146,6 +146,10 @@ python scripts/train.py --config configs/enveda_cpu_smoke.yaml
 
 Config defaults: 5k train / 500 val, 2 epochs (capped at 200 steps), `decode_mode: selfies`, checkpoint `artifacts/checkpoints/enveda_cpu_smoke.pt`.
 
+### Kaggle Code Competition notebook
+
+See `notebooks/enveda_casmi26_submit.ipynb` and `notebooks/README.md` for Featured Code Competition upload/submit steps (attach competition data + `kaggle/` code Dataset + smoke checkpoint Dataset → Save Version → Submit). Offline modules live under `kaggle/spec2smiles`.
+
 ### Kaggle predict / submission
 
 ```bash

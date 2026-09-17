@@ -9,7 +9,7 @@ from pathlib import Path
 
 # Allow running without install: add src to path
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT / "src"))
+sys.path.insert(0, str(ROOT))  # kaggle/spec2smiles
 
 from spec2smiles.train import load_config, train_loop  # noqa: E402
 
